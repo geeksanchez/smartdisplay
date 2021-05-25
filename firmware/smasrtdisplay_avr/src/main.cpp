@@ -149,10 +149,15 @@ class Display : public TriggeredTask
   public:
     Display();
     virtual void run(uint32_t now);
-    void setDisplayValue(uint8_t _sensor, uint8_t _value);
+    void setUV(uint8_t _uv);
+    void setPressure(float _pressure);
+    void setTemperature(float _temperature);
+    void setAltitude(float _altitude);
   private:
-    uint8_t sensor;
-    uint8_t value;
+    uint8_t uv;
+    float pressure;
+    float temperature;
+    float altitude;
 };
 
 // ***
@@ -160,8 +165,10 @@ class Display : public TriggeredTask
 // ***
 Display::Display()
 	:TriggeredTask(),
-  sensor(0),
-  value(0)
+  uv(0),
+  pressure(0.0),
+  temperature(0.0),
+  altitude(0.0)
   {
     // Setup the LCD
     tft.InitLCD();
@@ -169,12 +176,35 @@ Display::Display()
 	}
 
 // ***
-// *** LightLevelAlarm::setAlarmCondition() <--updates alarmCondition=true via ptrAlarm->setAlarm()
+// *** Display::setUV() <--updates uv level via ptrDisplay->setUV(uv)
 // ***
-void Display::setDisplayValue(uint8_t _sensor, uint8_t _value)
+void Display::setUV(uint8_t _uv)
 {
-	sensor = _sensor;
-  value = _value;
+  uv = _uv;
+}
+
+// ***
+// *** Display::setPressure() <--updates pressure via ptrDisplay->setPressure(pressure)
+// ***
+void Display::setPressure(float _pressure)
+{
+  pressure = _pressure;
+}
+
+// ***
+// *** Display::setTemperature() <--updates temperature via ptrDisplay->setTemperature(temperature)
+// ***
+void Display::setTemperature(float _temperature)
+{
+  temperature = _temperature;
+}
+
+// ***
+// *** Display::setAltitude() <--updates altitude via ptrDisplay->setAltitude(altitude)
+// ***
+void Display::setAltitude(float _altitude)
+{
+  altitude = _altitude;
 }
 
 // ***
@@ -241,9 +271,10 @@ void uvSensor::run(uint32_t now)
   float outputVoltage = 3.3 / refLevel * uvLevel;
   float uvIntensity = mapfloat(outputVoltage, 0.99, 2.9, 0.0, 15.0);
   value = round(uvIntensity);
-  ptrDebugger->debugWrite(String(value));
+  String s = "UV level:" + String(value); 
+  ptrDebugger->debugWrite(s);
 
-  ptrDisplay->setDisplayValue(0, 0);
+  ptrDisplay->setUV(value);
 	ptrDisplay->setRunnable();
 
   incRunTime(rate);
@@ -299,9 +330,10 @@ void BMP180Sensor::run(uint32_t now)
     if (event.pressure)
     {
       /* Display atmospheric pressue in hPa */
-      ptrDebugger->debugWrite("Pressure:    ");
-      ptrDebugger->debugWrite(String(event.pressure));
-      ptrDebugger->debugWrite(" hPa");
+      String s = "Pressure: " + String(event.pressure) + " hPa";
+      ptrDebugger->debugWrite(s);
+      ptrDisplay->setPressure(event.pressure);
+
       
       /* Calculating altitude with reasonable accuracy requires pressure    *
       * sea level pressure for your position at the moment the data is     *
@@ -321,18 +353,17 @@ void BMP180Sensor::run(uint32_t now)
       /* First we get the current temperature from the BMP085 */
       float temperature;
       bmp180.getTemperature(&temperature);
-      ptrDebugger->debugWrite("Temperature: ");
-      ptrDebugger->debugWrite(String(temperature));
-      ptrDebugger->debugWrite(" C");
+      s = "Temperature: " + String(temperature) + " C";
+      ptrDebugger->debugWrite(s);
+      ptrDisplay->setTemperature(temperature);
 
       /* Then convert the atmospheric pressure, and SLP to altitude         */
       /* Update this next line with the current SLP for better results      */
       float seaLevelPressure = SENSORS_PRESSURE_SEALEVELHPA;
-      ptrDebugger->debugWrite("Altitude:    "); 
-      ptrDebugger->debugWrite(String(bmp180.pressureToAltitude(seaLevelPressure, event.pressure))); 
-      ptrDebugger->debugWrite(" m");
+      s = "Altitude: " + String(bmp180.pressureToAltitude(seaLevelPressure, event.pressure)) + " m";
+      ptrDebugger->debugWrite(s);
+      ptrDisplay->setAltitude(bmp180.pressureToAltitude(seaLevelPressure, event.pressure));
     
-      ptrDisplay->setDisplayValue(0, 0);
     	ptrDisplay->setRunnable();
 
     }
@@ -352,7 +383,7 @@ void loop() {
   // put your main code here, to run repeatedly:
 	Debugger debugger;
   Display display;
-  uvSensor uvsensor(A6, A7, 1000, &display, &debugger);
+  uvSensor uvsensor(A7, A6, 1000, &display, &debugger);
   BMP180Sensor bmp180sensor(1000, &display, &debugger);
 // ***
 // *** Create an array of pointers (eek!) to the task objects we just instantiated.
@@ -380,6 +411,5 @@ void loop() {
 	
 	// GO! Run the scheduler - it never returns.
 	scheduler.runTasks();
-
 
 }
