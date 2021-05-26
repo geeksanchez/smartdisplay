@@ -42,7 +42,7 @@ extern uint8_t SmallFont[];
 #define LCD_WR A1 // LCD Write goes to Analog 1
 #define LCD_RST 5 // 
 
-UTFT tft(LGDP4524,LCD_RS,LCD_WR,LCD_CS,LCD_RST);
+UTFT tft(ILI9225,LCD_RS,LCD_WR,LCD_CS,LCD_RST);
 
 //The Arduino Map function but for floats
 //From: http://forum.arduino.cc/index.php?topic=3922.0
@@ -147,7 +147,7 @@ void Debugger::debugWrite(String debugMsg)
 class Display : public TriggeredTask
 {
   public:
-    Display();
+    Display(Debugger *_ptrDebugger);
     virtual void run(uint32_t now);
     void setUV(uint8_t _uv);
     void setPressure(float _pressure);
@@ -158,21 +158,25 @@ class Display : public TriggeredTask
     float pressure;
     float temperature;
     float altitude;
+    Debugger *ptrDebugger;
 };
 
 // ***
 // *** Display Constructor
 // ***
-Display::Display()
+Display::Display(Debugger *_ptrDebugger)
 	:TriggeredTask(),
   uv(0),
   pressure(0.0),
   temperature(0.0),
-  altitude(0.0)
+  altitude(0.0),
+  ptrDebugger(_ptrDebugger)
   {
     // Setup the LCD
     tft.InitLCD();
     tft.setFont(SmallFont);
+    tft.setColor(VGA_WHITE);
+    tft.clrScr();
 	}
 
 // ***
@@ -213,8 +217,19 @@ void Display::setAltitude(float _altitude)
 // ***
 void Display::run(uint32_t now)
 {
-  
-	// ***
+  String s = "Rayos UV = " + String(uv) + "    ";
+	tft.print(s, LEFT, 30);
+  ptrDebugger->debugWrite(s);
+  s = "Temperatura = " + String(temperature) + " C    ";
+	tft.print(s, LEFT, 60);
+  ptrDebugger->debugWrite(s);
+  s = "Presion = " + String(pressure) + " hPa    ";
+	tft.print(s, LEFT, 90);
+  ptrDebugger->debugWrite(s);
+  s = "Altitud = " + String(altitude) + " m    ";
+	tft.print(s, LEFT, 120);
+  ptrDebugger->debugWrite(s);
+  // ***
 	// *** resetRunnable() IMPORTANT! IMPORTANT!
 	// *** It's important to resetRunnable() after executing a TriggeredTask.
 	// *** If bool runFlag in a TriggeredTask is not reset, the TriggeredTask will
@@ -244,7 +259,8 @@ class uvSensor : public TimedTask
     uint8_t pinRef;
     uint8_t pinValue;
     uint32_t rate;
-    uint8_t value;
+    uint8_t count;
+    uint32_t value;
     Display *ptrDisplay;
     Debugger *ptrDebugger;		// Pointer to debugger
 };
@@ -254,6 +270,7 @@ uvSensor::uvSensor(uint8_t _pinRef, uint8_t _pinValue, uint32_t _rate, Display *
     pinRef(_pinRef),
     pinValue(_pinValue),
     rate(_rate),
+    count(0),
     value(0),
   	ptrDisplay(_ptrDisplay),
   	ptrDebugger(_ptrDebugger)
@@ -270,12 +287,18 @@ void uvSensor::run(uint32_t now)
   //Use the 3.3V power pin as a reference to get a very accurate output value from sensor
   float outputVoltage = 3.3 / refLevel * uvLevel;
   float uvIntensity = mapfloat(outputVoltage, 0.99, 2.9, 0.0, 15.0);
-  value = round(uvIntensity);
-  String s = "UV level:" + String(value); 
-  ptrDebugger->debugWrite(s);
+  value += round(uvIntensity);
+  count++;
+//  String s = "UV level:" + String(value); 
+//  ptrDebugger->debugWrite(s);
 
-  ptrDisplay->setUV(value);
-	ptrDisplay->setRunnable();
+  if (count > 10) {
+    value = value / count;
+    count = 0;
+    value = 0;
+    ptrDisplay->setUV((uint8_t)value);
+  	ptrDisplay->setRunnable();
+  }
 
   incRunTime(rate);
 }
@@ -299,6 +322,10 @@ class BMP180Sensor : public TimedTask
     uint32_t rate;
     bool enabled;
     Adafruit_BMP085_Unified bmp180;
+    float pressure;
+    float temperature;
+    float altitude;
+    uint8_t count;
     Display *ptrDisplay;
     Debugger *ptrDebugger;		// Pointer to debugger
 };
@@ -308,6 +335,10 @@ BMP180Sensor::BMP180Sensor(uint32_t _rate, Display *_ptrDisplay, Debugger *_ptrD
     rate(_rate),
     enabled(true),
     bmp180(Adafruit_BMP085_Unified(10085)),
+    pressure(0),
+    temperature(0),
+    altitude(0),
+    count(0),
   	ptrDisplay(_ptrDisplay),
   	ptrDebugger(_ptrDebugger)
 {
@@ -330,9 +361,9 @@ void BMP180Sensor::run(uint32_t now)
     if (event.pressure)
     {
       /* Display atmospheric pressue in hPa */
-      String s = "Pressure: " + String(event.pressure) + " hPa";
-      ptrDebugger->debugWrite(s);
-      ptrDisplay->setPressure(event.pressure);
+    //  String s = "Pressure: " + String(event.pressure) + " hPa";
+    //  ptrDebugger->debugWrite(s);
+      float p = event.pressure;
 
       
       /* Calculating altitude with reasonable accuracy requires pressure    *
@@ -351,20 +382,38 @@ void BMP180Sensor::run(uint32_t now)
       * pressure and sea level at: http://bit.ly/16Au8ol                   */
       
       /* First we get the current temperature from the BMP085 */
-      float temperature;
-      bmp180.getTemperature(&temperature);
-      s = "Temperature: " + String(temperature) + " C";
-      ptrDebugger->debugWrite(s);
-      ptrDisplay->setTemperature(temperature);
+      float t;
+      bmp180.getTemperature(&t);
+    //  s = "Temperature: " + String(temperature) + " C";
+    //  ptrDebugger->debugWrite(s);
 
       /* Then convert the atmospheric pressure, and SLP to altitude         */
       /* Update this next line with the current SLP for better results      */
       float seaLevelPressure = SENSORS_PRESSURE_SEALEVELHPA;
-      s = "Altitude: " + String(bmp180.pressureToAltitude(seaLevelPressure, event.pressure)) + " m";
-      ptrDebugger->debugWrite(s);
-      ptrDisplay->setAltitude(bmp180.pressureToAltitude(seaLevelPressure, event.pressure));
-    
-    	ptrDisplay->setRunnable();
+    //  s = "Altitude: " + String(bmp180.pressureToAltitude(seaLevelPressure, event.pressure)) + " m";
+    //  ptrDebugger->debugWrite(s);
+      float a = bmp180.pressureToAltitude(seaLevelPressure, event.pressure);
+
+      pressure += p;
+      temperature += t;
+      altitude += a;
+      count++;
+
+      if (count > 10) {
+        pressure /= count;
+        temperature /= count;
+        altitude /= count;
+
+        ptrDisplay->setPressure(pressure);
+        ptrDisplay->setTemperature(temperature);
+        ptrDisplay->setAltitude(altitude);
+        ptrDisplay->setRunnable();
+
+        pressure = 0;
+        temperature = 0;
+        altitude = 0;
+        count = 0;
+      }
 
     }
   }
@@ -382,7 +431,7 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 	Debugger debugger;
-  Display display;
+  Display display(&debugger);
   uvSensor uvsensor(A7, A6, 1000, &display, &debugger);
   BMP180Sensor bmp180sensor(1000, &display, &debugger);
 // ***
