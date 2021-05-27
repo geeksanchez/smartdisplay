@@ -6,6 +6,13 @@
 #include "Adafruit_BMP085_U.h"
 #include "UTFT.h"
 #include "TouchScreen.h"
+#include "SoftwareSerial.h"
+#include <avr/io.h>
+#include <avr/wdt.h>
+
+
+SoftwareSerial espSerial(2, 3); // (ESP_TX, ESP_RX)
+
 
 // Declare which fonts we will be using
 extern uint8_t SmallFont[];
@@ -153,11 +160,15 @@ class Display : public TriggeredTask
     void setPressure(float _pressure);
     void setTemperature(float _temperature);
     void setAltitude(float _altitude);
+    void setHour(String _hour);
+    void setDate(String _date);
   private:
     uint8_t uv;
     float pressure;
     float temperature;
     float altitude;
+    String hora;
+    String fecha;
     Debugger *ptrDebugger;
 };
 
@@ -170,10 +181,12 @@ Display::Display(Debugger *_ptrDebugger)
   pressure(0.0),
   temperature(0.0),
   altitude(0.0),
+  hora(""),
+  fecha(""),
   ptrDebugger(_ptrDebugger)
   {
     // Setup the LCD
-    tft.InitLCD();
+    tft.InitLCD(PORTRAIT);
     tft.setFont(SmallFont);
     tft.setColor(VGA_WHITE);
     tft.clrScr();
@@ -212,6 +225,22 @@ void Display::setAltitude(float _altitude)
 }
 
 // ***
+// *** Display::setHour() <--updates hour string via ptrDisplay->setHour(hour)
+// ***
+void Display::setHour(String _hour)
+{
+  hora = _hour;
+}
+
+// ***
+// *** Display::setDate() <--updates date string via ptrDisplay->setDate(date)
+// ***
+void Display::setDate(String _date)
+{
+  fecha = _date;
+}
+
+// ***
 // *** Display::run() <--executed by TaskScheduler as a result of canRun() returning true,
 // ***							 in this case, sensors utilizing ptrDisplay->setRunnable()
 // ***
@@ -229,6 +258,12 @@ void Display::run(uint32_t now)
   s = "Altitud = " + String(altitude) + " m    ";
 	tft.print(s, LEFT, 120);
   ptrDebugger->debugWrite(s);
+  s = "Hora = " + hora;
+	tft.print(s, LEFT, 150);
+  ptrDebugger->debugWrite(s);
+  s = "Fecha = " + fecha;
+	tft.print(s, LEFT, 180);
+  ptrDebugger->debugWrite(s);
   // ***
 	// *** resetRunnable() IMPORTANT! IMPORTANT!
 	// *** It's important to resetRunnable() after executing a TriggeredTask.
@@ -237,6 +272,118 @@ void Display::run(uint32_t now)
 	// *** and be ignored by the TaskScheduler until triggered again.
 	// ***
 	resetRunnable();
+}
+
+/****************************************************************************************
+*	Class:		WiFiSerial
+*	Task Type: Task (always runs)
+*	Purpose:	Communication with WiFi modules thru serial protocol.
+*
+*****************************************************************************************/
+
+// ***
+// *** Define the WiFiSerial Class as type Task
+// ***
+class WiFiSerial : public Task
+{
+  public:
+    WiFiSerial(Display *_ptrDisplay);
+    void sendCMD(String Msg);
+    virtual void run(uint32_t now);		//Override the run() method
+    virtual bool canRun(uint32_t now);	//Override the canRun() method
+
+  private:
+    uint16_t byteCount;
+    char msg[256], last_msg[256];
+    bool new_message;
+    Display *ptrDisplay;
+    void processMsg();
+};
+
+WiFiSerial::WiFiSerial(Display *_ptrDisplay)
+  : Task(),
+  byteCount(0),
+  new_message(false),
+  ptrDisplay(_ptrDisplay)
+{
+    espSerial.begin(9600);
+}
+
+void WiFiSerial::processMsg()
+{
+  char *rest = last_msg;
+  char *token = strtok_r(rest, " ", &rest);
+  if (token != NULL)
+  {
+    if (strcmp(token, "TIME") == 0)
+    {
+      if (rest != NULL)
+      {
+        ptrDisplay->setHour(rest);
+      }
+    }
+    else if (strcmp(token, "DATE") == 0)
+    {
+      if (rest != NULL)
+      {
+        ptrDisplay->setDate(rest);
+      }
+    }
+    else if (strcmp(token, "WIFI") == 0)
+    {
+    }
+    else if (strcmp(token, "IPADDR") == 0)
+    {
+    }
+    else if (strcmp(token, "RESET") == 0)
+    {
+      wdt_enable(WDTO_15MS);
+    }
+    else
+    {
+    }
+  }
+}
+
+void WiFiSerial::sendCMD(String Msg)
+{
+  espSerial.println(Msg);
+}
+
+bool WiFiSerial::canRun(uint32_t now)
+{
+    return (espSerial.available() > 0);
+}
+
+void WiFiSerial::run(uint32_t now)
+{
+    while (espSerial.available() > 0)
+    {
+        char ch = espSerial.read();
+        if (byteCount > 255)
+        {
+            byteCount = 0;
+            msg[byteCount] = '\0';
+        }
+        else
+        {
+            if ((ch != '\n') && (ch != '\r'))
+            {
+                msg[byteCount] = ch;
+                byteCount++;
+            }
+            else
+            {
+                if (ch == '\n')
+                {
+                    msg[byteCount] = '\0';
+                    new_message = true;
+                    strcpy(last_msg, msg);
+                    byteCount = 0;
+                }
+            }
+        }
+    }
 }
 
 /*****************************************************************************************
@@ -253,7 +400,7 @@ void Display::run(uint32_t now)
 class uvSensor : public TimedTask
 {
   public:
-    uvSensor(uint8_t _pinRef, uint8_t _pinValue, uint32_t _rate, Display *_ptrDisplay, Debugger *_ptrDebugger);
+    uvSensor(uint8_t _pinRef, uint8_t _pinValue, uint32_t _rate, Display *_ptrDisplay, WiFiSerial *_ptrWiFiSerial, Debugger *_ptrDebugger);
     virtual void run(uint32_t now);
   private:
     uint8_t pinRef;
@@ -262,10 +409,11 @@ class uvSensor : public TimedTask
     uint8_t count;
     uint32_t value;
     Display *ptrDisplay;
+    WiFiSerial *ptrWiFiSerial;
     Debugger *ptrDebugger;		// Pointer to debugger
 };
 
-uvSensor::uvSensor(uint8_t _pinRef, uint8_t _pinValue, uint32_t _rate, Display *_ptrDisplay, Debugger *_ptrDebugger)
+uvSensor::uvSensor(uint8_t _pinRef, uint8_t _pinValue, uint32_t _rate, Display *_ptrDisplay, WiFiSerial *_ptrWiFiSerial, Debugger *_ptrDebugger)
   : TimedTask(millis()),
     pinRef(_pinRef),
     pinValue(_pinValue),
@@ -273,6 +421,7 @@ uvSensor::uvSensor(uint8_t _pinRef, uint8_t _pinValue, uint32_t _rate, Display *
     count(0),
     value(0),
   	ptrDisplay(_ptrDisplay),
+    ptrWiFiSerial(_ptrWiFiSerial),
   	ptrDebugger(_ptrDebugger)
 {
   pinMode(pinRef, INPUT);
@@ -298,6 +447,8 @@ void uvSensor::run(uint32_t now)
     value = 0;
     ptrDisplay->setUV((uint8_t)value);
   	ptrDisplay->setRunnable();
+    String s = "UV " + String(value);
+    ptrWiFiSerial->sendCMD(s);
   }
 
   incRunTime(rate);
@@ -316,7 +467,7 @@ void uvSensor::run(uint32_t now)
 class BMP180Sensor : public TimedTask
 {
   public:
-    BMP180Sensor(uint32_t _rate, Display *_ptrDisplay, Debugger *_ptrDebugger);
+    BMP180Sensor(uint32_t _rate, Display *_ptrDisplay, WiFiSerial *_ptrWiFiSerial, Debugger *_ptrDebugger);
     virtual void run(uint32_t now);
   private:
     uint32_t rate;
@@ -327,10 +478,11 @@ class BMP180Sensor : public TimedTask
     float altitude;
     uint8_t count;
     Display *ptrDisplay;
+    WiFiSerial *ptrWiFiSerial;
     Debugger *ptrDebugger;		// Pointer to debugger
 };
 
-BMP180Sensor::BMP180Sensor(uint32_t _rate, Display *_ptrDisplay, Debugger *_ptrDebugger)
+BMP180Sensor::BMP180Sensor(uint32_t _rate, Display *_ptrDisplay, WiFiSerial *_ptrWiFiSerial, Debugger *_ptrDebugger)
   : TimedTask(millis()),
     rate(_rate),
     enabled(true),
@@ -340,6 +492,7 @@ BMP180Sensor::BMP180Sensor(uint32_t _rate, Display *_ptrDisplay, Debugger *_ptrD
     altitude(0),
     count(0),
   	ptrDisplay(_ptrDisplay),
+    ptrWiFiSerial(_ptrWiFiSerial),
   	ptrDebugger(_ptrDebugger)
 {
   if(!bmp180.begin())
@@ -409,6 +562,13 @@ void BMP180Sensor::run(uint32_t now)
         ptrDisplay->setAltitude(altitude);
         ptrDisplay->setRunnable();
 
+        String s = "PRESSURE " + String(pressure);
+        ptrWiFiSerial->sendCMD(s);
+        s = "TEMPERATURE " + String(temperature);
+        ptrWiFiSerial->sendCMD(s);
+        s = "ALTITUDE " + String(altitude);
+        ptrWiFiSerial->sendCMD(s);
+
         pressure = 0;
         temperature = 0;
         altitude = 0;
@@ -426,14 +586,16 @@ void BMP180Sensor::run(uint32_t now)
 ******************************************************************************************/
 void setup() {
   // put your setup code here, to run once:
+  wdt_disable();
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
 	Debugger debugger;
   Display display(&debugger);
-  uvSensor uvsensor(A7, A6, 1000, &display, &debugger);
-  BMP180Sensor bmp180sensor(1000, &display, &debugger);
+  WiFiSerial wifiserial(&display);
+  uvSensor uvsensor(A7, A6, 1000, &display, &wifiserial, &debugger);
+  BMP180Sensor bmp180sensor(1000, &display, &wifiserial, &debugger);
 // ***
 // *** Create an array of pointers (eek!) to the task objects we just instantiated.
 // ***
@@ -448,6 +610,7 @@ void loop() {
 		
 		&debugger,		
 		&display,
+    &wifiserial,
 		&uvsensor,
 		&bmp180sensor
 				
