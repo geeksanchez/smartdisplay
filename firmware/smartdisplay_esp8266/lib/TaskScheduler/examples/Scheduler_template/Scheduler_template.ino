@@ -35,7 +35,6 @@
 
 
 // ==== INCLUDES ==================================================================================
-#include <Arduino.h>
 
 // ==== Uncomment desired compile options =================================
 // #define _TASK_SLEEP_ON_IDLE_RUN  // Enable 1 ms SLEEP_IDLE powerdowns between tasks if no callback methods were invoked during the pass
@@ -99,7 +98,7 @@ Task t2 (TASK_IMMEDIATE, 100, &task2Callback, &ts, true);
 void setup() {
   // put your setup code here, to run once:
 #if defined(_DEBUG_) || defined(_TEST_)
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(2000);
   _PL("Scheduler Template: setup()");
 #endif
