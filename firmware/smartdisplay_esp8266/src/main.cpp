@@ -36,6 +36,7 @@
 
 // ==== INCLUDES ==================================================================================
 #include <Arduino.h>
+#include <WiFiManager.h>
 
 // ==== Uncomment desired compile options =================================
 // #define _TASK_SLEEP_ON_IDLE_RUN  // Enable 1 ms SLEEP_IDLE powerdowns between tasks if no callback methods were invoked during the pass
@@ -59,11 +60,13 @@
 
 
 // ==== GLOBALS ===================================================================================
+WiFiManager wm;
+
 // ==== Scheduler ==============================
 Scheduler ts;
 
-void task1Callback();
-void task2Callback();
+void connectWifi();
+void checkWifiStatus();
 
 // ==== Scheduling defines (cheat sheet) =====================
 /*
@@ -74,7 +77,7 @@ void task2Callback();
   TASK_IMMEDIATE
   TASK_FOREVER
   TASK_ONCE
-  TASK_NOTIMEOUT
+  TASK_NOTIMEOUT  
   
   TASK_SCHEDULE     - schedule is a priority, with "catch up" (default)
   TASK_SCHEDULE_NC  - schedule is a priority, without "catch up"
@@ -82,10 +85,8 @@ void task2Callback();
 */
 
 // ==== Task definitions ========================
-Task t1 (100 * TASK_MILLISECOND, TASK_FOREVER, &task1Callback, &ts, true);
-Task t2 (TASK_IMMEDIATE, 100, &task2Callback, &ts, true);
-
-
+Task tConnectWifi(TASK_IMMEDIATE, TASK_ONCE, &connectWifi);
+Task tCheckWifi(TASK_IMMEDIATE, TASK_FOREVER, &checkWifiStatus);
 
 // ==== CODE ======================================================================================
 
@@ -103,6 +104,8 @@ void setup() {
   delay(2000);
   _PL("Scheduler Template: setup()");
 #endif
+  ts.addTask(tConnectWifi);
+  tConnectWifi.enable();
 }
 
 
@@ -116,31 +119,35 @@ void setup() {
 /**************************************************************************/
 void loop() {
   ts.execute();
+  wm.process();
 }
 
 
 /**************************************************************************/
 /*!
-    @brief    Callback method of task1 - explain
+    @brief    Connect wifi
     @param    none
     @returns  none
 */
 /**************************************************************************/
-void task1Callback() {
-_PM("task1Callback()");
+void connectWifi() {
+_PM("connectWifi()");
 //  task code
+  WiFi.mode(WIFI_STA);
+  wm.setConfigPortalBlocking(false);
+  wm.autoConnect("SmartDisplayAP","password");
 }
 
 
 /**************************************************************************/
 /*!
-    @brief    Callback method of task2 - explain
+    @brief    Verify if wifi is connected, otherwise try to connect
     @param    none
     @returns  none
 */
 /**************************************************************************/
-void task2Callback() {
-_PM("task2Callback()");
+void checkWifiStatus() {
+_PM("checkWifiStatus()");
 //  task code
 }
 
