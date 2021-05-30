@@ -63,7 +63,9 @@
 // ==== GLOBALS ===================================================================================
 WiFiManager wm;
 
-WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
+WiFiEventHandler wifiConnectHandler;
+WiFiEventHandler wifiDisconnectHandler;
+
 bool firstNTPConnection = false;
 
 const PROGMEM char *ntpServer = "pool.ntp.org";
@@ -98,6 +100,24 @@ Task tCheckNTP(10 * TASK_SECOND, TASK_FOREVER, &checkNTP);
 
 // ==== CODE ======================================================================================
 
+void wifiEventHandler(WiFiEvent_t event)
+{
+  Serial.printf("Got Event: %d\n", event);
+}
+
+void onWifiConnect(const WiFiEventStationModeConnected &event)
+{
+  Serial.println("Station connected");
+  tConnectNTP.enable();
+}
+
+void onWifiDisconnect(const WiFiEventStationModeDisconnected &event)
+{
+  Serial.println("Station disconnected");
+  tCheckNTP.disable();
+  NTP.stop();
+}
+
 void connectNTP()
 {
   _PM("connectNTP()");
@@ -120,28 +140,16 @@ void setup()
 {
       // put your setup code here, to run once:
 #if defined(_DEBUG_) || defined(_TEST_)
-  Serial.begin(9600);
+  Serial.begin(9600);-
   delay(2000);
   _PL("Scheduler Template: setup()");
 #endif
+  Serial.setDebugOutput(true);
+  WiFi.onEvent(wifiEventHandler);
 
-  gotIpEventHandler = WiFi.onStationModeGotIP(
-    [](const WiFiEventStationModeGotIP &event)
-    {
-      Serial.print("Station connected, IP: ");
-      Serial.println(WiFi.localIP());
-      tConnectNTP.enable();
-    }
-  );
-
-  disconnectedEventHandler = WiFi.onStationModeDisconnected(
-    [](const WiFiEventStationModeDisconnected &event)
-    {
-      Serial.println("Station disconnected");
-      tCheckNTP.disable();
-      NTP.stop();
-    }
-  );
+  wifiConnectHandler = WiFi.onStationModeConnected(onWifiConnect);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
+  
 
   ts.addTask(tConnectWifi);
   ts.addTask(tConnectNTP);
@@ -184,7 +192,6 @@ _PM("connectWifi()");
   //wm.resetSettings();  // Erase stored configuration for testing
   wm.setConfigPortalBlocking(false);
   wm.autoConnect("SmartDisplayAP","password");
-  tConnectNTP.enable();
 }
 
 
