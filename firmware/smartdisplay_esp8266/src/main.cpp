@@ -12,6 +12,7 @@
         
 */
 // ==== DEFINES ===================================================================================
+#define NTP_TIMEOUT 1500
 
 // ==== Debug and Test options ==================
 #define _DEBUG_
@@ -36,7 +37,9 @@
 
 // ==== INCLUDES ==================================================================================
 #include <Arduino.h>
+#include <ESP8266WiFi.h>
 #include <WiFiManager.h>
+#include <ESPNtpClient.h>
 
 // ==== Uncomment desired compile options =================================
 // #define _TASK_SLEEP_ON_IDLE_RUN  // Enable 1 ms SLEEP_IDLE powerdowns between tasks if no callback methods were invoked during the pass
@@ -57,38 +60,54 @@
 
 #include <TaskScheduler.h>
 
-
-
 // ==== GLOBALS ===================================================================================
 WiFiManager wm;
+
+WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
+bool firstNTPConnection = false;
+
+const PROGMEM char *ntpServer = "pool.ntp.org";
 
 // ==== Scheduler ==============================
 Scheduler ts;
 
 void connectWifi();
-void checkWifiStatus();
+void connectNTP();
+void checkNTP();
 
 // ==== Scheduling defines (cheat sheet) =====================
 /*
-  TASK_MILLISECOND
-  TASK_SECOND
-  TASK_MINUTE
-  TASK_HOUR
-  TASK_IMMEDIATE
-  TASK_FOREVER
-  TASK_ONCE
-  TASK_NOTIMEOUT  
-  
-  TASK_SCHEDULE     - schedule is a priority, with "catch up" (default)
-  TASK_SCHEDULE_NC  - schedule is a priority, without "catch up"
-  TASK_INTERVAL     - interval is a priority, without "catch up"
+TASK_MILLISECOND
+TASK_SECOND
+TASK_MINUTE
+TASK_HOUR
+TASK_IMMEDIATE
+TASK_FOREVER
+TASK_ONCE
+TASK_NOTIMEOUT  
+
+TASK_SCHEDULE     - schedule is a priority, with "catch up" (default)
+TASK_SCHEDULE_NC  - schedule is a priority, without "catch up"
+TASK_INTERVAL     - interval is a priority, without "catch up"
 */
 
 // ==== Task definitions ========================
 Task tConnectWifi(TASK_IMMEDIATE, TASK_ONCE, &connectWifi);
-Task tCheckWifi(TASK_IMMEDIATE, TASK_FOREVER, &checkWifiStatus);
+Task tConnectNTP(TASK_IMMEDIATE, TASK_ONCE, &connectNTP);
+Task tCheckNTP(10 * TASK_SECOND, TASK_FOREVER, &checkNTP);
 
 // ==== CODE ======================================================================================
+
+void connectNTP()
+{
+  _PM("connectNTP()");
+  NTP.setTimeZone(TZ_America_Bogota);
+  NTP.setInterval(600);
+  NTP.setNTPTimeout(NTP_TIMEOUT);
+  NTP.begin(ntpServer);
+  firstNTPConnection = true;
+  tCheckNTP.enable();
+}
 
 /**************************************************************************/
 /*!
@@ -97,14 +116,37 @@ Task tCheckWifi(TASK_IMMEDIATE, TASK_FOREVER, &checkWifiStatus);
     @returns  none
 */
 /**************************************************************************/
-void setup() {
-  // put your setup code here, to run once:
+void setup()
+{
+      // put your setup code here, to run once:
 #if defined(_DEBUG_) || defined(_TEST_)
   Serial.begin(9600);
   delay(2000);
   _PL("Scheduler Template: setup()");
 #endif
+
+  gotIpEventHandler = WiFi.onStationModeGotIP(
+    [](const WiFiEventStationModeGotIP &event)
+    {
+      Serial.print("Station connected, IP: ");
+      Serial.println(WiFi.localIP());
+      tConnectNTP.enable();
+    }
+  );
+
+  disconnectedEventHandler = WiFi.onStationModeDisconnected(
+    [](const WiFiEventStationModeDisconnected &event)
+    {
+      Serial.println("Station disconnected");
+      tCheckNTP.disable();
+      NTP.stop();
+    }
+  );
+
   ts.addTask(tConnectWifi);
+  ts.addTask(tConnectNTP);
+  ts.addTask(tCheckNTP);
+
   tConnectWifi.enable();
 }
 
@@ -120,6 +162,11 @@ void setup() {
 void loop() {
   ts.execute();
   wm.process();
+  /*if ((WiFi.status() == WL_CONNECTED) && (firstNTPConnection)) 
+  {
+    tCheckNTP.enable();
+    firstNTPConnection = false;
+  }*/
 }
 
 
@@ -134,21 +181,25 @@ void connectWifi() {
 _PM("connectWifi()");
 //  task code
   WiFi.mode(WIFI_STA);
+  //wm.resetSettings();  // Erase stored configuration for testing
   wm.setConfigPortalBlocking(false);
   wm.autoConnect("SmartDisplayAP","password");
+  tConnectNTP.enable();
 }
 
 
 /**************************************************************************/
 /*!
-    @brief    Verify if wifi is connected, otherwise try to connect
+    @brief    Call ntp info
     @param    none
     @returns  none
 */
 /**************************************************************************/
-void checkWifiStatus() {
-_PM("checkWifiStatus()");
+void checkNTP() {
+_PM("checkNTP()");
 //  task code
+  
+  _PL(NTP.getTimeDateStringUs());
 }
 
 
