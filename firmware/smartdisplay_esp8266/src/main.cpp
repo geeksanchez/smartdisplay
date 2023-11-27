@@ -99,12 +99,6 @@ Task tConnectNTP(TASK_IMMEDIATE, TASK_ONCE, &connectNTP);
 Task tCheckNTP(10 * TASK_SECOND, TASK_FOREVER, &checkNTP);
 
 // ==== CODE ======================================================================================
-
-void wifiEventHandler(WiFiEvent_t event)
-{
-  Serial.printf("Got Event: %d\n", event);
-}
-
 void onWifiConnect(const WiFiEventStationModeConnected &event)
 {
   Serial.println("Station connected");
@@ -140,12 +134,11 @@ void setup()
 {
       // put your setup code here, to run once:
 #if defined(_DEBUG_) || defined(_TEST_)
-  Serial.begin(9600);-
+  Serial.begin(9600);
   delay(2000);
   _PL("Scheduler Template: setup()");
 #endif
   Serial.setDebugOutput(true);
-  WiFi.onEvent(wifiEventHandler);
 
   wifiConnectHandler = WiFi.onStationModeConnected(onWifiConnect);
   wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
